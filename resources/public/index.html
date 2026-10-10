@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Track My Sugar</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Track My Sugar</h1>
+    <nav>
+      <button type="button" class="tab active" data-tab="readings">Readings</button>
+      <button type="button" class="tab" data-tab="persons">People</button>
+      <button type="button" class="tab" data-tab="metric-types">Metric types</button>
+    </nav>
+  </header>
+
+  <main>
+    <div id="message" role="status" hidden></div>
+
+    <!-- Readings (HEALTH_DETAIL) -->
+    <section id="readings" class="panel">
+      <form id="reading-form" class="card">
+        <h2 id="reading-form-title">Add reading</h2>
+        <input type="hidden" name="id">
+        <label>Person
+          <select name="person_id" required></select>
+        </label>
+        <label>Metric type
+          <select name="metric_type_id" required></select>
+        </label>
+        <label>Value
+          <input type="number" name="health_metric" step="any" required>
+        </label>
+        <label>Date &amp; time <small>(blank = now)</small>
+          <input type="datetime-local" name="created_date_time" step="1">
+        </label>
+        <div class="actions">
+          <button type="submit">Save</button>
+          <button type="button" class="secondary" data-cancel>Cancel</button>
+        </div>
+      </form>
+
+      <div class="card">
+        <div class="toolbar">
+          <h2>Readings</h2>
+          <label>Person <select id="reading-filter-person"></select></label>
+          <label>Metric <select id="reading-filter-metric"></select></label>
+        </div>
+        <table>
+          <thead><tr><th>When</th><th>Person</th><th>Metric</th><th class="num">Value</th><th></th></tr></thead>
+          <tbody id="reading-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- People (PERSON) -->
+    <section id="persons" class="panel" hidden>
+      <form id="person-form" class="card">
+        <h2 id="person-form-title">Add person</h2>
+        <input type="hidden" name="id">
+        <label>Name <input type="text" name="name" required></label>
+        <label>Email <input type="email" name="email"></label>
+        <div class="actions">
+          <button type="submit">Save</button>
+          <button type="button" class="secondary" data-cancel>Cancel</button>
+        </div>
+      </form>
+
+      <div class="card">
+        <h2>People</h2>
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>Email</th><th></th></tr></thead>
+          <tbody id="person-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Metric types (METRIC_TYPE) -->
+    <section id="metric-types" class="panel" hidden>
+      <form id="metric-type-form" class="card">
+        <h2 id="metric-type-form-title">Add metric type</h2>
+        <input type="hidden" name="id">
+        <label>Type <input type="text" name="type" required placeholder="e.g. BSL"></label>
+        <label>Description <input type="text" name="description" required></label>
+        <div class="actions">
+          <button type="submit">Save</button>
+          <button type="button" class="secondary" data-cancel>Cancel</button>
+        </div>
+      </form>
+
+      <div class="card">
+        <h2>Metric types</h2>
+        <table>
+          <thead><tr><th>ID</th><th>Type</th><th>Description</th><th></th></tr></thead>
+          <tbody id="metric-type-rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
