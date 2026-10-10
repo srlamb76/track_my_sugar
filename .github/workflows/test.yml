@@ -29,11 +29,12 @@ jobs:
           key: deps-${{ hashFiles('deps.edn') }}
           restore-keys: deps-
 
-      # db/ is gitignored; one test opens db/tms_db read-only.
+      # db/ is gitignored; one test opens db/tms_db read-only and needs the seed data.
       - name: Create database
         run: |
           mkdir -p db
           sqlite3 db/tms_db < schema/schema.sql
+          sqlite3 db/tms_db < schema/default_load.sql
 
       - name: Run tests
         run: clojure -M:test
