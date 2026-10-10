@@ -80,6 +80,20 @@ sqlite3 my.db < schema/schema.sql
 sqlite3 my.db < schema/default_load.sql   # optional seed data
 ```
 
+### Note on `.gitignore`
+
+The `db/` directory is listed in `.gitignore`, so the default database
+`db/tms_db` (which holds your personal readings) is never committed. After
+cloning the repository, create it before first run:
+
+```sh
+mkdir -p db
+sqlite3 db/tms_db < schema/schema.sql
+sqlite3 db/tms_db < schema/default_load.sql   # optional seed data
+```
+
+Build output (`target/`) and tool caches (`.cpcache/`, `.lsp/`) are ignored too.
+
 ## Using the front end
 
 The page has three tabs:
