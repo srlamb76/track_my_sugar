@@ -3,3 +3,9 @@ target/
 .lsp/
 .clj-kondo/.cache/
 db/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties

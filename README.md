@@ -191,3 +191,23 @@ To run a single namespace or a single test:
 clojure -M:test -n track-my-sugar.api-test
 clojure -M:test -v track-my-sugar.api-test/persons-crud
 ```
+
+## Android app
+
+`android/` is an Android (Kotlin) app that runs the same front end in a
+WebView with a local SQLite database, so it works offline. It doesn't use the
+Clojure server: `Api.kt` is a Kotlin port of `api.clj` with the same routes,
+validation and status codes, and `app.js` calls it through a JavaScript bridge
+when running in the app. `resources/public/` and `schema/` are shared with the
+server, not copied.
+
+Open `android/` in Android Studio and run it, or from a machine with the
+Android SDK and Gradle installed:
+
+```sh
+cd android
+gradle wrapper        # once, to generate ./gradlew
+./gradlew assembleDebug
+```
+
+The app's data lives in its own private database, separate from `db/tms_db`.

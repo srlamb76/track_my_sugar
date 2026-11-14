@@ -5,6 +5,15 @@
 
 const api = {
   async request(method, path, body) {
+    if (window.TmsNative) {
+      // Android app: answered in-process by the native bridge.
+      const res = JSON.parse(window.TmsNative.request(
+        method, '/api' + path, body === undefined ? null : JSON.stringify(body)));
+      if (res.status === 204) return null;
+      const data = res.body ? JSON.parse(res.body) : {};
+      if (res.status >= 400) throw new Error(data.error || `Request failed (${res.status})`);
+      return data;
+    }
     const opts = { method, headers: {} };
     if (body !== undefined) {
       opts.headers['Content-Type'] = 'application/json';
@@ -147,9 +156,9 @@ async function loadPersons() {
   state.persons = await api.list('persons');
   $('#person-rows').innerHTML = state.persons.length
     ? state.persons.map((p) => `<tr>
-        <td>${p.id}</td>
-        <td>${escapeHtml(p.name)}</td>
-        <td>${escapeHtml(p.email)}</td>
+        <td data-label="ID">${p.id}</td>
+        <td data-label="Name">${escapeHtml(p.name)}</td>
+        <td data-label="Email">${escapeHtml(p.email)}</td>
         ${actionButtons(p.id)}
       </tr>`).join('')
     : emptyRow(4, 'No people yet');
@@ -178,9 +187,9 @@ async function loadMetricTypes() {
   state.metricTypes = await api.list('metric-types');
   $('#metric-type-rows').innerHTML = state.metricTypes.length
     ? state.metricTypes.map((m) => `<tr>
-        <td>${m.id}</td>
-        <td>${escapeHtml(m.type)}</td>
-        <td>${escapeHtml(m.description)}</td>
+        <td data-label="ID">${m.id}</td>
+        <td data-label="Type">${escapeHtml(m.type)}</td>
+        <td data-label="Description">${escapeHtml(m.description)}</td>
         ${actionButtons(m.id)}
       </tr>`).join('')
     : emptyRow(4, 'No metric types yet');
@@ -223,10 +232,10 @@ async function loadReadings() {
 
   $('#reading-rows').innerHTML = rows.length
     ? rows.map((r) => `<tr>
-        <td>${escapeHtml(r.created_date_time)}</td>
-        <td>${escapeHtml(personName(r.person_id))}</td>
-        <td>${escapeHtml(metricName(r.metric_type_id))}</td>
-        <td class="num">${escapeHtml(r.health_metric)}</td>
+        <td data-label="When">${escapeHtml(r.created_date_time)}</td>
+        <td data-label="Person">${escapeHtml(personName(r.person_id))}</td>
+        <td data-label="Metric">${escapeHtml(metricName(r.metric_type_id))}</td>
+        <td class="num" data-label="Value">${escapeHtml(r.health_metric)}</td>
         ${actionButtons(r.id)}
       </tr>`).join('')
     : emptyRow(5, 'No readings yet');
