@@ -211,4 +211,88 @@ class ApiTest {
         assertEquals(404, r.status)
         assertEquals("Not found", obj(r).getString("error"))
     }
+
+    // ---- Security and input hardening (mirrors the Clojure API tests) --------
+
+    @Test
+    fun enforcesTextLengthLimits() {
+        fun rep(n: Int) = "a".repeat(n)
+        assertEquals(400, status("POST", "/api/persons", j("name" to rep(201))))
+        assertEquals(201, status("POST", "/api/persons", j("name" to rep(200))))
+        assertEquals(400, status("POST", "/api/persons", j("name" to "B", "email" to rep(255))))
+        assertEquals(400, status("POST", "/api/metric-types", j("type" to rep(51), "description" to "d")))
+        assertEquals(400, status("POST", "/api/metric-types", j("type" to "T", "description" to rep(501))))
+    }
+
+    @Test
+    fun timestampsMustBeInTheStoredFormat() {
+        val (person, bsl, _) = seed()
+        val valid = { j("person_id" to person.getLong("id"), "metric_type_id" to bsl.getLong("id"), "health_metric" to 5.0) }
+        for (bad in listOf("yesterday", "2026-01-02", "2026-01-02T08:30:00", "2026-1-2 8:30:00",
+            "2026-01-02 08:30:00; DROP TABLE PERSON")) {
+            assertEquals(bad, 400, status("POST", "/api/health-details", valid().put("created_date_time", bad)))
+        }
+        assertEquals(201, status("POST", "/api/health-details", valid().put("created_date_time", "2026-01-02 08:30:00")))
+    }
+
+    @Test
+    fun readingValuesMustBeBounded() {
+        val (person, bsl, _) = seed()
+        val valid = { j("person_id" to person.getLong("id"), "metric_type_id" to bsl.getLong("id"), "health_metric" to 5.0) }
+        assertEquals(400, status("POST", "/api/health-details", valid().put("health_metric", 1e12)))
+        assertEquals(201, status("POST", "/api/health-details", valid().put("health_metric", -3.5)))
+    }
+
+    @Test
+    fun oversizedBodiesAndHugeIdsAreRejectedSafely() {
+        assertEquals(413, status("POST", "/api/persons", "{\"name\":\"" + "a".repeat(70000) + "\"}"))
+        assertEquals(0, arr(call("GET", "/api/persons")).length())
+        assertEquals(404, status("GET", "/api/persons/99999999999999999999"))
+        assertEquals(404, status("DELETE", "/api/health-details/99999999999999999999"))
+        assertEquals(404, status("GET", "/api/persons/99999999999999999999/health-details"))
+        assertEquals(404, status("GET", "/api/" + "a".repeat(3000)))
+    }
+
+    @Test
+    fun sqlMetacharactersAreStoredAsPlainText() {
+        val name = "Robert'); DROP TABLE PERSON;--"
+        assertEquals(name, create("/api/persons", j("name" to name)).getString("name"))
+        assertEquals(name, arr(call("GET", "/api/persons")).getJSONObject(0).getString("name"))
+        // The table survives.
+        assertEquals(200, status("GET", "/api/persons"))
+    }
+
+    @Test
+    fun unknownFieldsCannotBeMassAssigned() {
+        val p = create("/api/persons", j("name" to "Mass", "id" to 999, "admin" to true))
+        assertTrue(p.getLong("id") != 999L)
+        assertTrue(!p.has("admin"))
+    }
+
+    @Test
+    fun readingsAreScopedToTheirPerson() {
+        val (person, bsl, _) = seed()
+        val other = create("/api/persons", j("name" to "Other"))
+        create("/api/health-details", j("person_id" to person.getLong("id"), "metric_type_id" to bsl.getLong("id"), "health_metric" to 5.0))
+        assertEquals(0, arr(call("GET", "/api/persons/${other.getLong("id")}/health-details")).length())
+        assertEquals(1, arr(call("GET", "/api/persons/${person.getLong("id")}/health-details")).length())
+    }
+
+    @Test
+    fun databaseHasReadingIndexesAndUpgradeAddsThem() {
+        fun indexes(): Set<String> {
+            val out = mutableSetOf<String>()
+            helper.readableDatabase.rawQuery("SELECT name FROM sqlite_master WHERE type = 'index'", null).use {
+                while (it.moveToNext()) out += it.getString(0)
+            }
+            return out
+        }
+        val wanted = setOf("health_detail_person_idx", "health_detail_metric_idx", "health_detail_time_idx")
+        assertTrue(indexes().containsAll(wanted))
+        val db = helper.writableDatabase
+        db.execSQL("DROP INDEX health_detail_time_idx")
+        helper.onUpgrade(db, 1, 2)
+        helper.onUpgrade(db, 1, 2)  // repeatable
+        assertTrue(indexes().containsAll(wanted))
+    }
 }

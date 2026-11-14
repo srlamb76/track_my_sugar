@@ -184,3 +184,16 @@
   (let [ds (db/datasource)]
     (is (vector? (db/list-persons ds)))
     (is (some? (db/get-metric-type-by-type ds "BSL")))))
+
+(deftest indexes
+  (let [names #(set (map :name (next.jdbc/execute! *ds* ["SELECT name FROM sqlite_master WHERE type = 'index'"]
+                                                    {:builder-fn next.jdbc.result-set/as-unqualified-lower-maps})))
+        wanted #{"health_detail_person_idx" "health_detail_metric_idx" "health_detail_time_idx"}]
+    (testing "schema.sql creates the reading indexes"
+      (is (every? (names) wanted)))
+    (testing "ensure-indexes! restores missing ones and can be repeated"
+      (next.jdbc/execute! *ds* ["DROP INDEX health_detail_time_idx"])
+      (is (not (contains? (names) "health_detail_time_idx")))
+      (db/ensure-indexes! *ds*)
+      (db/ensure-indexes! *ds*)
+      (is (every? (names) wanted)))))

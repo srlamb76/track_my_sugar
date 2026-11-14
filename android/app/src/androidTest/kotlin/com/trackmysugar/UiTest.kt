@@ -6,6 +6,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -547,5 +548,82 @@ class UiTest {
         // Numbers (even negative ones) and empty values are never altered.
         assertEquals("-3.5", JSONArray("[" + js("csvField(-3.5)") + "]").getString(0))
         assertEquals("", JSONArray("[" + js("csvField(null)") + "]").getString(0))
+    }
+
+    // ---- Security --------------------------------------------------------
+
+    @Test
+    fun contentSecurityPolicyBlocksInlineScript() {
+        assertTrue(js("!!document.querySelector('meta[http-equiv=\"Content-Security-Policy\"]')") == "true")
+        js("""(function(){ var s = document.createElement('script'); s.textContent = 'window.__injected = 1';
+            document.head.append(s); })()""")
+        assertEquals("undefined", js("typeof window.__injected").trim('"'))
+    }
+
+    @Test
+    fun navigatingToAnotherSiteIsBlocked() {
+        val before = js("location.href")
+        js("location.href = 'https://example.com/'")
+        Thread.sleep(1000)
+        assertEquals(before, js("location.href"))
+        assertTrue(text("h1").contains("Track My Sugar"))
+    }
+
+    @Test
+    fun nativeFileSaveRejectsOtherFileTypesAndSanitisesNames() {
+        // Not a CSV/JSON type: refused.
+        val bad = JSONObject(js("TmsNative.saveFile('x.html', 'text/html', '<script>')").unquote())
+        assertEquals(false, bad.getBoolean("ok"))
+        // Path tricks are reduced to a plain file name in Downloads.
+        val ok = JSONObject(js("TmsNative.saveFile('../../track-my-sugar-readings-evil/../x y.csv', 'text/csv', 'a,b')").unquote())
+        assertEquals(true, ok.getBoolean("ok"))
+        val name = ok.getString("name")
+        assertTrue(name, !name.contains("/") && !name.contains(".."))
+        assertTrue(name, name.endsWith(".csv"))
+        deleteExports()
+    }
+
+    private fun String.unquote() = JSONArray("[$this]").getString(0)
+
+    // ---- Performance and memory -----------------------------------------
+
+    /** Adds many readings straight through the native bridge (much faster than the form). */
+    private fun bulkReadings(count: Int) {
+        js("""(function(){
+            var first = (path) => JSON.parse(JSON.parse(TmsNative.request('GET', path, null)).body)[0].id;
+            var ids = [first('/api/persons'), first('/api/metric-types')];
+            for (var i = 0; i < $count; i++) {
+              TmsNative.request('POST', '/api/health-details', JSON.stringify({
+                person_id: ids[0], metric_type_id: ids[1], health_metric: 5 + (i % 40) / 10,
+                created_date_time: '2026-02-' + String(1 + (i % 27)).padStart(2, '0') + ' ' + String(i % 24).padStart(2, '0') + ':' + String(i % 60).padStart(2, '0') + ':00' }));
+            }
+        })()""")
+    }
+
+    @Test
+    fun largeHistoryKeepsTheReadingsTableAndChartLight() {
+        addMetric(); addPerson()
+        bulkReadings(600)
+        tab("readings")
+        js("document.querySelector('header .tab[data-tab=\"readings\"]').click()")
+        // 500 newest rows plus a note saying the rest are hidden.
+        waitFor("document.querySelectorAll('#reading-rows tr').length === 501")
+        assertTrue(text("#reading-rows").contains("Showing the newest 500 of 600 readings"))
+
+        tab("analytics")
+        waitFor("document.querySelectorAll('#chart-svg polyline').length === 1")
+        assertEquals("point markers are dropped above the cap", 0, dots())
+        assertTrue(text("#chart").contains("600 readings: points are hidden"))
+        // The summary table still covers every reading.
+        assertTrue(text("#an-stat-rows").contains("600"))
+    }
+
+    @Test
+    fun leavingAnalyticsReleasesTheLoadedReadings() {
+        seedAnalytics()
+        assertEquals("5", js("state.allReadings.length").trim('"'))
+        tab("readings")
+        assertEquals("0", js("state.allReadings.length").trim('"'))
+        assertEquals("", js("document.querySelector('#chart').innerHTML").trim('"'))
     }
 }

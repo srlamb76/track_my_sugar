@@ -24,7 +24,7 @@ track_my_sugar/
 
 ## Prerequisites
 
-- **Java** 11 or newer (`java -version`)
+- **Java** 17 or newer (`java -version`)
 - **Clojure CLI** (`clojure` / `clj`), see https://clojure.org/guides/install_clojure
 
 The first command you run downloads dependencies into `~/.m2` and
@@ -50,6 +50,11 @@ environment variables:
 clojure -M:run 8080 /path/to/other.db      # [port] [db-path]
 PORT=8080 TMS_DB=/path/to/other.db clojure -M:run
 ```
+
+The server listens on `127.0.0.1` only and accepts only `localhost`,
+`127.0.0.1` and `[::1]` as the `Host` header (see [Security](#security)). To use
+it from another device set `TMS_HOST` and `TMS_ALLOWED_HOSTS`, for example
+`TMS_HOST=0.0.0.0 TMS_ALLOWED_HOSTS=myhost.lan clojure -M:run`.
 
 Stop the server with `Ctrl+C`.
 
@@ -187,6 +192,50 @@ curl -X POST localhost:3000/api/health-details \
      -d '{"person_id":1,"metric_type_id":1,"health_metric":5.8}'
 ```
 
+## Security
+
+The app has **no accounts or login**: it is a single-user tool, so every record
+belongs to whoever runs it. That means there is no per-user data to protect
+from other users (the classic IDOR, where one user reads another's record by
+changing an id), but also that *anyone who can reach the port sees everything*.
+The defences follow from that:
+
+| Risk (OWASP) | What the app does |
+|---|---|
+| Broken access control, exposure | Listens on loopback only by default. Binding elsewhere needs `TMS_HOST` and prints a warning; put it behind a VPN or an authenticating proxy. IDs in URLs only ever address the one shared dataset, and `/persons/:id/health-details` returns only that person's readings. |
+| DNS rebinding | The `Host` header must be an allowed name (403 otherwise). |
+| CSRF | `POST` and `PUT` need `Content-Type: application/json` (415 otherwise). A cross-site form can't send it, and a cross-site JSON request needs a CORS preflight the server never grants. |
+| Injection (SQL) | Every query is parameterised; table and column names come from code, never from requests. Unknown request fields are ignored, so ids can't be mass-assigned. |
+| Injection (XSS) | The front end escapes every value it puts in HTML. A Content-Security-Policy (header and `<meta>`) allows only the app's own scripts and styles, no inline script, no remote origins and no framing. |
+| Insecure design / DoS | Request bodies over 64 KB get 413, text fields have length limits, readings are numbers within ±1e9 and timestamps must be `YYYY-MM-DD HH:MM:SS`. Jetty uses a small thread pool, a header size limit and doesn't advertise its version. |
+| Security misconfiguration | `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Resource-Policy` and `Permissions-Policy` headers; API responses are `no-store`; unexpected errors return a generic 500 and are logged, never sent to the client. |
+| Vulnerable components | Dependencies were updated to current releases (Ring/Jetty, sqlite-jdbc, next.jdbc and others). CI runs with read-only token permissions. |
+| CSV injection | Exported cells starting with `=`, `+`, `-` or `@` get a leading apostrophe. |
+
+**Android app:** the page loads only from the app's own assets and every other
+URL is blocked. The app has no `INTERNET` permission. Backups are off
+(`allowBackup="false"`) so readings don't go to cloud backup, and the database
+is in the app's private storage. The native bridge only saves CSV or JSON files
+to Downloads, with a sanitised name and a size limit. Release builds are
+minified with R8.
+
+Not covered: encryption of the SQLite file at rest (rely on device or disk
+encryption), and authentication for multi-user use. If you need either, say so;
+both are real design changes.
+
+## Performance and memory
+
+- `HEALTH_DETAIL` has indexes on person, metric type and date (`schema.sql`).
+  The server adds them to an existing database on startup, and the Android
+  database upgrades itself.
+- The readings table shows the newest 500 rows (filter to see others).
+- The analytics graph reads the readings only while that tab is open and
+  releases them when you leave it. With more than 500 readings the point
+  markers are dropped and only the lines are drawn, so the page stays light.
+  Names are looked up in maps rather than by scanning lists.
+- The Android app closes its WebView and database when it exits, and release
+  builds are shrunk with R8.
+
 ## Using the data access layer from Clojure
 
 ```clojure
@@ -205,13 +254,16 @@ Foreign-key enforcement is turned on for every connection.
 clojure -M:test
 ```
 
-This runs both test namespaces:
+This runs all three test namespaces:
 
 - `track-my-sugar.db-test` tests the CRUD functions for each table: required
   fields, unique and foreign-key constraints, ordering and filtering.
 - `track-my-sugar.api-test` tests every REST endpoint, including status codes,
-  JSON bodies, validation errors, `404` and `409` handling, and serving the
-  front end.
+  JSON bodies, validation errors, `404` and `409` handling, serving the front
+  end, and the security checks (Host header, content type, headers, size and
+  format limits, hostile input).
+- `track-my-sugar.server-test` starts the real Jetty server and checks the
+  loopback binding and the `Host` check over a socket.
 
 Each test builds a new temporary SQLite database from `schema/schema.sql` and
 deletes it afterwards, so the tests never change `db/tms_db`. One test opens

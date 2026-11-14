@@ -27,7 +27,20 @@
   ([db-path]
    (jdbc/get-datasource {:dbtype "sqlite"
                          :dbname db-path
-                         :foreign_keys "true"})))
+                         :foreign_keys "true"
+                         ;; Wait up to 5s for a competing writer instead of
+                         ;; failing at once with SQLITE_BUSY.
+                         :busy_timeout "5000"})))
+
+(defn ensure-indexes!
+  "Creates the HEALTH_DETAIL indexes (also in schema.sql) if they are missing,
+  so databases made before they existed get them on startup. They serve the
+  per-person / per-metric / date-ordered reading queries. Safe to repeat."
+  [ds]
+  (doseq [stmt ["CREATE INDEX IF NOT EXISTS health_detail_person_idx ON HEALTH_DETAIL(person_id, metric_type_id, created_date_time)"
+                "CREATE INDEX IF NOT EXISTS health_detail_metric_idx ON HEALTH_DETAIL(metric_type_id)"
+                "CREATE INDEX IF NOT EXISTS health_detail_time_idx ON HEALTH_DETAIL(created_date_time)"]]
+    (jdbc/execute! ds [stmt])))
 
 (defn init-schema!
   "Executes each statement in the SQL file at `schema-path` against `ds`.

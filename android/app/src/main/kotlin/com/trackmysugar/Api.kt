@@ -20,31 +20,34 @@ class Api(private val db: SQLiteDatabase) {
 
     private class HttpError(val status: Int, message: String) : Exception(message)
 
-    private class Field(val type: Type, val description: String, val required: Boolean) {
-        enum class Type { NON_BLANK_STRING, NULLABLE_STRING, POSITIVE_INT, NUMBER }
+    /** `maxLength` applies to the string types; it stops one request storing megabytes of text. */
+    private class Field(
+        val type: Type, val description: String, val required: Boolean, val maxLength: Int = 0
+    ) {
+        enum class Type { NON_BLANK_STRING, NULLABLE_STRING, POSITIVE_INT, NUMBER, TIMESTAMP }
     }
 
     private class Table(val name: String, val fields: Map<String, Field>)
 
     private val persons = Table(
         "PERSON", linkedMapOf(
-            "name" to Field(Field.Type.NON_BLANK_STRING, "a non-empty string", true),
-            "email" to Field(Field.Type.NULLABLE_STRING, "a string or null", false),
+            "name" to Field(Field.Type.NON_BLANK_STRING, "a non-empty string of at most 200 characters", true, 200),
+            "email" to Field(Field.Type.NULLABLE_STRING, "a string of at most 254 characters, or null", false, 254),
         )
     )
     private val metricTypes = Table(
         "METRIC_TYPE", linkedMapOf(
-            "type" to Field(Field.Type.NON_BLANK_STRING, "a non-empty string", true),
-            "description" to Field(Field.Type.NON_BLANK_STRING, "a non-empty string", true),
+            "type" to Field(Field.Type.NON_BLANK_STRING, "a non-empty string of at most 50 characters", true, 50),
+            "description" to Field(Field.Type.NON_BLANK_STRING, "a non-empty string of at most 500 characters", true, 500),
         )
     )
     private val healthDetails = Table(
         "HEALTH_DETAIL", linkedMapOf(
             "person_id" to Field(Field.Type.POSITIVE_INT, "a positive integer", true),
             "metric_type_id" to Field(Field.Type.POSITIVE_INT, "a positive integer", true),
-            "health_metric" to Field(Field.Type.NUMBER, "a number", true),
+            "health_metric" to Field(Field.Type.NUMBER, "a number between -1e9 and 1e9", true),
             "created_date_time" to Field(
-                Field.Type.NON_BLANK_STRING,
+                Field.Type.TIMESTAMP,
                 "a string such as \"2026-01-02 08:30:00\"", false
             ),
         )
@@ -56,6 +59,9 @@ class Api(private val db: SQLiteDatabase) {
         "health-details" to healthDetails,
     )
 
+    /** The only timestamp format the app writes and sorts on; see api.clj. */
+    private val timestampFormat = Regex("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")
+
     private val collectionRoute = Regex("^/([a-z-]+)$")
     private val itemRoute = Regex("^/([a-z-]+)/([0-9]+)$")
     private val personReadingsRoute = Regex("^/persons/([0-9]+)/health-details$")
@@ -63,12 +69,15 @@ class Api(private val db: SQLiteDatabase) {
     @Synchronized
     fun handle(method: String, target: String, body: String?): Response =
         try {
+            if (target.length > MAX_PATH_CHARS) throw HttpError(404, "Not found")
+            if ((body?.length ?: 0) > MAX_BODY_CHARS) throw HttpError(413, "Request body too large")
             route(method.uppercase(), target, body)
         } catch (e: HttpError) {
             error(e.status, e.message ?: "")
         } catch (e: SQLiteConstraintException) {
             error(409, constraintMessage(e.message ?: ""))
         } catch (e: Exception) {
+            // Never put exception text in a response; it could expose SQL or paths.
             error(500, "Database error")
         }
 
@@ -81,7 +90,8 @@ class Api(private val db: SQLiteDatabase) {
 
         personReadingsRoute.matchEntire(path)?.let { m ->
             if (method != "GET") return notFound()
-            val id = m.groupValues[1].toLong()
+            // An id too large for a Long is simply an id that doesn't exist.
+            val id = m.groupValues[1].toLongOrNull() ?: return notFound()
             if (get(persons, id) == null) return notFound()
             val metric = query["metric_type_id"]
             val metricId = metric?.toLongOrNull()?.takeIf { it > 0 }
@@ -106,7 +116,7 @@ class Api(private val db: SQLiteDatabase) {
 
         itemRoute.matchEntire(path)?.let { m ->
             val table = tables[m.groupValues[1]] ?: return notFound()
-            val id = m.groupValues[2].toLong()
+            val id = m.groupValues[2].toLongOrNull() ?: return notFound()
             return when (method) {
                 "GET" -> okOrNotFound(get(table, id))
                 "PUT" -> okOrNotFound(update(table, id, readJson(body)))
@@ -169,18 +179,23 @@ class Api(private val db: SQLiteDatabase) {
             val v = if (data.isNull(key)) null else data.get(key)
             when (field.type) {
                 Field.Type.NON_BLANK_STRING ->
-                    if (v is String && v.isNotBlank()) values.put(key, v) else bad(key, field)
+                    if (v is String && v.isNotBlank() && v.length <= field.maxLength) values.put(key, v)
+                    else bad(key, field)
                 Field.Type.NULLABLE_STRING ->
-                    when (v) {
-                        null -> values.putNull(key)
-                        is String -> values.put(key, v)
+                    when {
+                        v == null -> values.putNull(key)
+                        v is String && v.length <= field.maxLength -> values.put(key, v)
                         else -> bad(key, field)
                     }
+                Field.Type.TIMESTAMP ->
+                    if (v is String && timestampFormat.matches(v)) values.put(key, v) else bad(key, field)
                 Field.Type.POSITIVE_INT ->
                     if ((v is Int || v is Long) && (v as Number).toLong() > 0) values.put(key, v.toLong())
                     else bad(key, field)
                 Field.Type.NUMBER ->
-                    if (v is Number) values.put(key, v.toDouble()) else bad(key, field)
+                    if (v is Number && v.toDouble().let { it.isFinite() && Math.abs(it) <= MAX_VALUE })
+                        values.put(key, v.toDouble())
+                    else bad(key, field)
             }
         }
         return values
@@ -232,4 +247,10 @@ class Api(private val db: SQLiteDatabase) {
         Response(status, JSONObject().put("error", message).toString())
     private fun notFound() = error(404, "Not found")
     private fun okOrNotFound(row: JSONObject?) = if (row != null) ok(row) else notFound()
+
+    private companion object {
+        const val MAX_BODY_CHARS = 65536
+        const val MAX_PATH_CHARS = 2048
+        const val MAX_VALUE = 1e9
+    }
 }

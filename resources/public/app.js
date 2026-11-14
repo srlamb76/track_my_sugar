@@ -41,6 +41,16 @@ const $ = (sel) => document.querySelector(sel);
 
 const state = { persons: [], metricTypes: [] };
 
+// id -> name lookups, rebuilt whenever the lists load, so rendering thousands
+// of readings costs one Map hit per row instead of scanning the whole list.
+const lookup = { person: new Map(), metric: new Map() };
+const personLabel = (id) => lookup.person.get(id) ?? `#${id}`;
+const metricLabel = (id) => lookup.metric.get(id) ?? `#${id}`;
+
+// The readings table shows at most this many rows (the newest); filters narrow
+// it. Keeps the DOM small however large the history grows.
+const MAX_READING_ROWS = 500;
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -154,6 +164,7 @@ function tableActions({ tbody, rows, resource, noun, form, onDeleted }) {
 
 async function loadPersons() {
   state.persons = await api.list('persons');
+  lookup.person = new Map(state.persons.map((p) => [p.id, p.name]));
   $('#person-rows').innerHTML = state.persons.length
     ? state.persons.map((p) => `<tr>
         <td data-label="ID">${p.id}</td>
@@ -186,6 +197,7 @@ tableActions({
 
 async function loadMetricTypes() {
   state.metricTypes = await api.list('metric-types');
+  lookup.metric = new Map(state.metricTypes.map((m) => [m.id, m.type]));
   $('#metric-type-rows').innerHTML = state.metricTypes.length
     ? state.metricTypes.map((m) => `<tr>
         <td data-label="ID">${m.id}</td>
@@ -227,20 +239,21 @@ async function loadReadings() {
     : await api.list('health-details');
   if (!personId && metricId) rows = rows.filter((r) => String(r.metric_type_id) === metricId);
   if (!personId) rows.sort((a, b) => String(a.created_date_time).localeCompare(String(b.created_date_time)) || a.id - b.id);
+  const total = rows.length;
+  if (total > MAX_READING_ROWS) rows = rows.slice(-MAX_READING_ROWS);  // newest rows
   state.readings = rows;
 
-  const personName = (id) => state.persons.find((p) => p.id === id)?.name ?? `#${id}`;
-  const metricName = (id) => state.metricTypes.find((m) => m.id === id)?.type ?? `#${id}`;
-
-  $('#reading-rows').innerHTML = rows.length
+  $('#reading-rows').innerHTML = (total > rows.length
+      ? emptyRow(5, `Showing the newest ${rows.length} of ${total} readings. Use the filters to see others.`)
+      : '') + (rows.length
     ? rows.map((r) => `<tr>
         <td data-label="When">${escapeHtml(r.created_date_time)}</td>
-        <td data-label="Person">${escapeHtml(personName(r.person_id))}</td>
-        <td data-label="Metric">${escapeHtml(metricName(r.metric_type_id))}</td>
+        <td data-label="Person">${escapeHtml(personLabel(r.person_id))}</td>
+        <td data-label="Metric">${escapeHtml(metricLabel(r.metric_type_id))}</td>
         <td class="num" data-label="Value">${escapeHtml(r.health_metric)}</td>
         ${actionButtons(r.id)}
       </tr>`).join('')
-    : emptyRow(5, 'No readings yet');
+    : emptyRow(5, 'No readings yet'));
 }
 
 const readingForm = crudForm({
@@ -275,6 +288,7 @@ $('#reading-filter-metric').addEventListener('change', () => run(loadReadings));
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CHART = { w: 680, h: 340, l: 52, r: 18, t: 14, b: 38 };
 const SERIES_COLORS = 8;
+const MAX_DOTS = 500;
 
 const parseTime = (s) => Date.parse(String(s).replace(' ', 'T'));
 
@@ -324,13 +338,11 @@ function analyticsRows() {
 
 // One series (line) per person + metric type combination.
 function buildSeries(rows) {
-  const personName = (id) => state.persons.find((p) => p.id === id)?.name ?? `#${id}`;
-  const metricName = (id) => state.metricTypes.find((m) => m.id === id)?.type ?? `#${id}`;
   const byKey = new Map();
   for (const r of rows) {
     const key = `${r.person_id}:${r.metric_type_id}`;
     if (!byKey.has(key)) {
-      byKey.set(key, { key, name: `${personName(r.person_id)} · ${metricName(r.metric_type_id)}`, points: [] });
+      byKey.set(key, { key, name: `${personLabel(r.person_id)} · ${metricLabel(r.metric_type_id)}`, points: [] });
     }
     byKey.get(key).points.push({ t: parseTime(r.created_date_time), v: r.health_metric, when: r.created_date_time });
   }
@@ -352,11 +364,20 @@ function renderChart(series) {
     return;
   }
   const { w, h, l, r, t, b } = CHART;
-  const all = series.flatMap((s) => s.points);
-  let tMin = Math.min(...all.map((p) => p.t));
-  let tMax = Math.max(...all.map((p) => p.t));
+  // One pass for the extents. (Math.min(...array) would overflow the call
+  // stack on very large series.)
+  let tMin = Infinity, tMax = -Infinity, vMin = Infinity, vMax = -Infinity, pointCount = 0;
+  for (const s of series) {
+    for (const p of s.points) {
+      if (p.t < tMin) tMin = p.t;
+      if (p.t > tMax) tMax = p.t;
+      if (p.v < vMin) vMin = p.v;
+      if (p.v > vMax) vMax = p.v;
+    }
+    pointCount += s.points.length;
+  }
   if (tMin === tMax) { tMin -= 432e5; tMax += 432e5; }
-  const yTicks = niceTicks(Math.min(...all.map((p) => p.v)), Math.max(...all.map((p) => p.v)));
+  const yTicks = niceTicks(vMin, vMax);
   const yMin = yTicks[0];
   const yMax = yTicks[yTicks.length - 1];
   const x = (v) => l + ((v - tMin) / (tMax - tMin)) * (w - l - r);
@@ -386,7 +407,9 @@ function renderChart(series) {
         points: s.points.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' '),
       }));
     }
-    for (const p of s.points) {
+    // Past MAX_DOTS points the markers (one DOM node and tooltip each) are
+    // dropped and only the lines are drawn; the table below still has the totals.
+    for (const p of pointCount > MAX_DOTS ? [] : s.points) {
       const dot = svgEl('circle', { class: 'dot', cx: x(p.t).toFixed(1), cy: y(p.v).toFixed(1), r: 4 });
       dot.append(svgEl('title', {}, `${s.name}\n${p.when}\n${p.v}`));
       g.append(dot);
@@ -394,6 +417,10 @@ function renderChart(series) {
     svg.append(g);
   }
   host.append(svg);
+  if (pointCount > MAX_DOTS) {
+    host.insertAdjacentHTML('beforeend',
+      `<p class="chart-note">${pointCount} readings: points are hidden for speed. Narrow the filters to see them.</p>`);
+  }
 }
 
 // Fills the legend and the per-series summary table below the graph.
@@ -403,15 +430,17 @@ function renderLegendAndStats(series) {
   const fmt = (n) => String(+n.toFixed(2));
   $('#an-stat-rows').innerHTML = series.length
     ? series.map((s) => {
-        const vals = s.points.map((p) => p.v);
-        const avg = vals.reduce((a, c) => a + c, 0) / vals.length;
+        let min = Infinity, max = -Infinity, sum = 0;
+        for (const p of s.points) { if (p.v < min) min = p.v; if (p.v > max) max = p.v; sum += p.v; }
+        const vals = s.points;
+        const avg = sum / vals.length;
         return `<tr>
           <td data-label="Series"><span class="swatch c${s.color}"></span>${escapeHtml(s.name)}</td>
           <td class="num" data-label="Readings">${vals.length}</td>
-          <td class="num" data-label="Min">${fmt(Math.min(...vals))}</td>
+          <td class="num" data-label="Min">${fmt(min)}</td>
           <td class="num" data-label="Avg">${fmt(avg)}</td>
-          <td class="num" data-label="Max">${fmt(Math.max(...vals))}</td>
-          <td class="num" data-label="Latest">${fmt(vals[vals.length - 1])}</td>
+          <td class="num" data-label="Max">${fmt(max)}</td>
+          <td class="num" data-label="Latest">${fmt(vals[vals.length - 1].v)}</td>
         </tr>`;
       }).join('')
     : emptyRow(6, 'No data');
@@ -424,6 +453,15 @@ state.allReadings = [];
 async function loadAnalytics() {
   state.allReadings = await api.list('health-details');
   renderAnalytics();
+}
+
+// Drops the loaded readings and the drawn chart. Called when leaving the
+// Analytics tab so a large history isn't held in memory while it isn't shown.
+function releaseAnalytics() {
+  state.allReadings = [];
+  $('#chart').innerHTML = '';
+  $('#chart-legend').innerHTML = '';
+  $('#an-stat-rows').innerHTML = '';
 }
 
 function renderAnalytics() {
@@ -445,8 +483,8 @@ const EXPORT_COLUMNS = [
 
 // The filtered readings as flat objects, oldest first (ties broken by id).
 function exportRows() {
-  const personName = (id) => state.persons.find((p) => p.id === id)?.name ?? '';
-  const metricName = (id) => state.metricTypes.find((m) => m.id === id)?.type ?? '';
+  const personName = (id) => lookup.person.get(id) ?? '';
+  const metricName = (id) => lookup.metric.get(id) ?? '';
   return analyticsRows()
     .map((r) => ({
       id: r.id,
@@ -525,6 +563,8 @@ $('#an-export-json').addEventListener('click', () => exportReadings('json'));
 for (const sel of ['#an-person', '#an-metric', '#an-from', '#an-to']) {
   $(sel).addEventListener('change', renderAnalytics);
 }
+// The filters apply as you change them; Enter must not submit the form (a page reload).
+$('#analytics-filters').addEventListener('submit', (e) => e.preventDefault());
 $('#an-clear').addEventListener('click', () => {
   $('#an-person').value = '';
   $('#an-metric').value = '';
@@ -542,6 +582,7 @@ document.querySelectorAll('header .tab').forEach((tab) => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('header .tab').forEach((t) => t.classList.toggle('active', t === tab));
     TOP_PANELS.forEach((id) => { $('#' + id).hidden = id !== tab.dataset.tab; });
+    if (tab.dataset.tab !== 'analytics') releaseAnalytics();
     // Re-read the data so the chart and lists reflect any recent changes.
     if (tab.dataset.tab === 'analytics') run(async () => { await Promise.all([loadPersons(), loadMetricTypes()]); await loadAnalytics(); });
     if (tab.dataset.tab === 'readings') run(loadReadings);

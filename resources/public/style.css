@@ -320,3 +320,5 @@ button.subtab.active { background: var(--surface); color: var(--accent-strong); 
 .export { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }
 .export h3 { margin: 0 0 .6rem; font-size: .85rem; font-weight: 600; color: var(--muted); }
 .export .actions button { flex: 1; }
+
+.chart-note { margin: .5rem 0 0; font-size: .8rem; color: var(--muted); }

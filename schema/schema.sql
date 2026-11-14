@@ -3,3 +3,6 @@ CREATE TABLE HEALTH_DETAIL (id INTEGER PRIMARY KEY, person_id INTEGER REFERENCES
 CREATE TABLE METRIC_TYPE (id INTEGER PRIMARY KEY, type TEXT NOT NULL UNIQUE, description TEXT NOT NULL UNIQUE); 
 CREATE UNIQUE INDEX person_name_idx on PERSON(name);
 CREATE UNIQUE INDEX metric_type_idx on METRIC_TYPE(type);
+CREATE INDEX IF NOT EXISTS health_detail_person_idx ON HEALTH_DETAIL(person_id, metric_type_id, created_date_time);
+CREATE INDEX IF NOT EXISTS health_detail_metric_idx ON HEALTH_DETAIL(metric_type_id);
+CREATE INDEX IF NOT EXISTS health_detail_time_idx ON HEALTH_DETAIL(created_date_time);
