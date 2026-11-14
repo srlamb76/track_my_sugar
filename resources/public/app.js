@@ -164,6 +164,7 @@ async function loadPersons() {
     : emptyRow(4, 'No people yet');
   fillSelect($('#reading-form').elements.person_id, state.persons, (p) => p.name);
   fillSelect($('#reading-filter-person'), state.persons, (p) => p.name, { blank: 'All' });
+  fillSelect($('#an-person'), state.persons, (p) => p.name, { blank: 'All people' });
 }
 
 const personForm = crudForm({
@@ -196,6 +197,7 @@ async function loadMetricTypes() {
   const label = (m) => `${m.type} — ${m.description}`;
   fillSelect($('#reading-form').elements.metric_type_id, state.metricTypes, label);
   fillSelect($('#reading-filter-metric'), state.metricTypes, (m) => m.type, { blank: 'All' });
+  fillSelect($('#an-metric'), state.metricTypes, (m) => m.type, { blank: 'All metric types' });
 }
 
 const metricTypeForm = crudForm({
@@ -268,12 +270,289 @@ $('#reading-filter-person').addEventListener('change', () => run(loadReadings));
 $('#reading-filter-metric').addEventListener('change', () => run(loadReadings));
 
 // ---------------------------------------------------------------------------
+// Analytics: line graph of readings over time
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const CHART = { w: 680, h: 340, l: 52, r: 18, t: 14, b: 38 };
+const SERIES_COLORS = 8;
+
+const parseTime = (s) => Date.parse(String(s).replace(' ', 'T'));
+
+// Round axis tick values (1, 2, 2.5, 5 x a power of ten) covering [min, max],
+// so the y axis shows readable numbers instead of the raw extremes.
+function niceTicks(min, max, count = 5) {
+  if (min === max) { min -= 1; max += 1; }
+  const rough = (max - min) / count;
+  const pow = 10 ** Math.floor(Math.log10(rough));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * pow).find((s) => s >= rough);
+  const start = Math.floor(min / step) * step;
+  const ticks = [];
+  for (let v = start; v < max + step * 0.999; v += step) ticks.push(+v.toFixed(10));
+  return ticks;
+}
+
+// Creates an SVG element (these need the SVG namespace, unlike HTML ones).
+function svgEl(name, attrs = {}, text) {
+  const el = document.createElementNS(SVG_NS, name);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+// X axis label: date and time for spans under two days, otherwise just the date.
+function formatTick(ms, spanMs) {
+  const d = new Date(ms);
+  const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return spanMs < 2 * 864e5 ? `${day.slice(5)} ${hm}` : day;
+}
+
+// Readings matching the person / metric type / date-range filters.
+function analyticsRows() {
+  const personId = $('#an-person').value;
+  const metricId = $('#an-metric').value;
+  const from = $('#an-from').value;
+  const to = $('#an-to').value;
+  return state.allReadings.filter((r) => {
+    const day = String(r.created_date_time).slice(0, 10);
+    return (!personId || String(r.person_id) === personId) &&
+           (!metricId || String(r.metric_type_id) === metricId) &&
+           (!from || day >= from) &&
+           (!to || day <= to);
+  });
+}
+
+// One series (line) per person + metric type combination.
+function buildSeries(rows) {
+  const personName = (id) => state.persons.find((p) => p.id === id)?.name ?? `#${id}`;
+  const metricName = (id) => state.metricTypes.find((m) => m.id === id)?.type ?? `#${id}`;
+  const byKey = new Map();
+  for (const r of rows) {
+    const key = `${r.person_id}:${r.metric_type_id}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, { key, name: `${personName(r.person_id)} · ${metricName(r.metric_type_id)}`, points: [] });
+    }
+    byKey.get(key).points.push({ t: parseTime(r.created_date_time), v: r.health_metric, when: r.created_date_time });
+  }
+  const series = [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
+  series.forEach((s, i) => {
+    s.color = i % SERIES_COLORS;
+    s.points.sort((a, b) => a.t - b.t);
+  });
+  return series;
+}
+
+// Draws the line graph into #chart. `x` and `y` map a timestamp / value to SVG
+// coordinates inside the plot area (the viewBox minus the CHART margins).
+function renderChart(series) {
+  const host = $('#chart');
+  host.innerHTML = '';
+  if (!series.length) {
+    host.innerHTML = '<p class="empty-chart">No readings match these filters</p>';
+    return;
+  }
+  const { w, h, l, r, t, b } = CHART;
+  const all = series.flatMap((s) => s.points);
+  let tMin = Math.min(...all.map((p) => p.t));
+  let tMax = Math.max(...all.map((p) => p.t));
+  if (tMin === tMax) { tMin -= 432e5; tMax += 432e5; }
+  const yTicks = niceTicks(Math.min(...all.map((p) => p.v)), Math.max(...all.map((p) => p.v)));
+  const yMin = yTicks[0];
+  const yMax = yTicks[yTicks.length - 1];
+  const x = (v) => l + ((v - tMin) / (tMax - tMin)) * (w - l - r);
+  const y = (v) => t + (1 - (v - yMin) / (yMax - yMin)) * (h - t - b);
+
+  const svg = svgEl('svg', { viewBox: `0 0 ${w} ${h}`, role: 'img', 'aria-label': 'Line graph of readings over time', id: 'chart-svg' });
+
+  for (const v of yTicks) {
+    svg.append(svgEl('line', { class: 'grid', x1: l, x2: w - r, y1: y(v), y2: y(v) }));
+    svg.append(svgEl('text', { class: 'tick', x: l - 8, y: y(v) + 4, 'text-anchor': 'end' }, String(v)));
+  }
+  const xCount = 5;
+  for (let i = 0; i < xCount; i++) {
+    const tv = tMin + ((tMax - tMin) * i) / (xCount - 1);
+    svg.append(svgEl('text', {
+      class: 'tick', x: x(tv), y: h - b + 18,
+      'text-anchor': i === 0 ? 'start' : i === xCount - 1 ? 'end' : 'middle',
+    }, formatTick(tv, tMax - tMin)));
+  }
+  svg.append(svgEl('line', { class: 'axis', x1: l, x2: w - r, y1: h - b, y2: h - b }));
+
+  for (const s of series) {
+    const g = svgEl('g', { class: `series c${s.color}`, 'data-series': s.name });
+    if (s.points.length > 1) {
+      g.append(svgEl('polyline', {
+        class: 'line', fill: 'none',
+        points: s.points.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' '),
+      }));
+    }
+    for (const p of s.points) {
+      const dot = svgEl('circle', { class: 'dot', cx: x(p.t).toFixed(1), cy: y(p.v).toFixed(1), r: 4 });
+      dot.append(svgEl('title', {}, `${s.name}\n${p.when}\n${p.v}`));
+      g.append(dot);
+    }
+    svg.append(g);
+  }
+  host.append(svg);
+}
+
+// Fills the legend and the per-series summary table below the graph.
+function renderLegendAndStats(series) {
+  $('#chart-legend').innerHTML = series.map((s) =>
+    `<li><span class="swatch c${s.color}"></span>${escapeHtml(s.name)}</li>`).join('');
+  const fmt = (n) => String(+n.toFixed(2));
+  $('#an-stat-rows').innerHTML = series.length
+    ? series.map((s) => {
+        const vals = s.points.map((p) => p.v);
+        const avg = vals.reduce((a, c) => a + c, 0) / vals.length;
+        return `<tr>
+          <td data-label="Series"><span class="swatch c${s.color}"></span>${escapeHtml(s.name)}</td>
+          <td class="num" data-label="Readings">${vals.length}</td>
+          <td class="num" data-label="Min">${fmt(Math.min(...vals))}</td>
+          <td class="num" data-label="Avg">${fmt(avg)}</td>
+          <td class="num" data-label="Max">${fmt(Math.max(...vals))}</td>
+          <td class="num" data-label="Latest">${fmt(vals[vals.length - 1])}</td>
+        </tr>`;
+      }).join('')
+    : emptyRow(6, 'No data');
+}
+
+// Every reading, loaded once per visit to the Analytics tab. Filtering happens
+// in the browser (analyticsRows), so changing a filter needs no new request.
+state.allReadings = [];
+
+async function loadAnalytics() {
+  state.allReadings = await api.list('health-details');
+  renderAnalytics();
+}
+
+function renderAnalytics() {
+  const series = buildSeries(analyticsRows());
+  renderChart(series);
+  renderLegendAndStats(series);
+}
+
+// ---------------------------------------------------------------------------
+// Export: download the readings that match the analytics filters
+
+// Columns of an export, in order. Names match the REST API fields, plus the
+// person and metric type names so the file is readable without the lookup
+// tables.
+const EXPORT_COLUMNS = [
+  'id', 'person_id', 'person', 'metric_type_id', 'metric_type',
+  'health_metric', 'created_date_time',
+];
+
+// The filtered readings as flat objects, oldest first (ties broken by id).
+function exportRows() {
+  const personName = (id) => state.persons.find((p) => p.id === id)?.name ?? '';
+  const metricName = (id) => state.metricTypes.find((m) => m.id === id)?.type ?? '';
+  return analyticsRows()
+    .map((r) => ({
+      id: r.id,
+      person_id: r.person_id,
+      person: personName(r.person_id),
+      metric_type_id: r.metric_type_id,
+      metric_type: metricName(r.metric_type_id),
+      health_metric: r.health_metric,
+      created_date_time: r.created_date_time,
+    }))
+    .sort((a, b) => String(a.created_date_time).localeCompare(String(b.created_date_time)) || a.id - b.id);
+}
+
+// One CSV field, quoted per RFC 4180 when it contains a comma, quote or
+// line break. Text starting with = + - @ is prefixed with an apostrophe so
+// spreadsheet programs show it as text instead of running it as a formula
+// (CSV injection); numbers are never altered.
+function csvField(value) {
+  if (value === null || value === undefined) return '';
+  let text = String(value);
+  if (typeof value === 'string' && /^[=+\-@\t\r]/.test(text)) text = "'" + text;
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+// CSV text with a header row and CRLF line endings. The leading byte order
+// mark makes Excel read the file as UTF-8, so accented names survive.
+function toCsv(rows) {
+  const lines = [EXPORT_COLUMNS.join(',')];
+  for (const row of rows) lines.push(EXPORT_COLUMNS.map((c) => csvField(row[c])).join(','));
+  return '﻿' + lines.join('\r\n') + '\r\n';
+}
+
+const toJson = (rows) => JSON.stringify(rows, null, 2) + '\n';
+
+// Saves `text` as a file the user can open. In the Android app the native
+// bridge writes it to the Downloads folder (WebView can't download blob:
+// URLs); in a browser it is a normal download. Returns the saved file name.
+function downloadFile(filename, mime, text) {
+  if (window.TmsNative) {
+    const res = JSON.parse(window.TmsNative.saveFile(filename, mime, text));
+    if (!res.ok) throw new Error(res.error || 'Could not save the file');
+    return res.name;
+  }
+  const url = URL.createObjectURL(new Blob([text], { type: `${mime};charset=utf-8` }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return filename;
+}
+
+function exportReadings(format) {
+  const rows = exportRows();
+  if (!rows.length) {
+    showMessage('Nothing to export: no readings match these filters', 'error');
+    return;
+  }
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const csv = format === 'csv';
+  run(async () => {
+    const saved = downloadFile(
+      `track-my-sugar-readings-${today}.${format}`,
+      csv ? 'text/csv' : 'application/json',
+      csv ? toCsv(rows) : toJson(rows));
+    showMessage(`Exported ${rows.length} reading${rows.length === 1 ? '' : 's'} to ${saved}`);
+  });
+}
+
+$('#an-export-csv').addEventListener('click', () => exportReadings('csv'));
+$('#an-export-json').addEventListener('click', () => exportReadings('json'));
+
+for (const sel of ['#an-person', '#an-metric', '#an-from', '#an-to']) {
+  $(sel).addEventListener('change', renderAnalytics);
+}
+$('#an-clear').addEventListener('click', () => {
+  $('#an-person').value = '';
+  $('#an-metric').value = '';
+  $('#an-from').value = '';
+  $('#an-to').value = '';
+  renderAnalytics();
+});
+
+// ---------------------------------------------------------------------------
 // Tabs & startup
 
-document.querySelectorAll('nav .tab').forEach((tab) => {
+const TOP_PANELS = ['readings', 'analytics', 'administration'];
+
+document.querySelectorAll('header .tab').forEach((tab) => {
   tab.addEventListener('click', () => {
-    document.querySelectorAll('nav .tab').forEach((t) => t.classList.toggle('active', t === tab));
-    document.querySelectorAll('.panel').forEach((p) => { p.hidden = p.id !== tab.dataset.tab; });
+    document.querySelectorAll('header .tab').forEach((t) => t.classList.toggle('active', t === tab));
+    TOP_PANELS.forEach((id) => { $('#' + id).hidden = id !== tab.dataset.tab; });
+    // Re-read the data so the chart and lists reflect any recent changes.
+    if (tab.dataset.tab === 'analytics') run(async () => { await Promise.all([loadPersons(), loadMetricTypes()]); await loadAnalytics(); });
+    if (tab.dataset.tab === 'readings') run(loadReadings);
+  });
+});
+
+// Administration sub-sections (People / Metric types).
+document.querySelectorAll('.subnav .subtab').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.subnav .subtab').forEach((t) => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.subpanel').forEach((p) => { p.hidden = p.id !== tab.dataset.subtab; });
   });
 });
 

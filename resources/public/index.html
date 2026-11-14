@@ -16,8 +16,8 @@
     </h1>
     <nav>
       <button type="button" class="tab active" data-tab="readings">Readings</button>
-      <button type="button" class="tab" data-tab="persons">People</button>
-      <button type="button" class="tab" data-tab="metric-types">Metric types</button>
+      <button type="button" class="tab" data-tab="analytics">Analytics</button>
+      <button type="button" class="tab" data-tab="administration">Administration</button>
     </nav>
     </div>
   </header>
@@ -61,8 +61,56 @@
       </div>
     </section>
 
+    <!-- Analytics -->
+    <section id="analytics" class="panel analytics" hidden>
+      <form id="analytics-filters" class="card" onsubmit="return false">
+        <h2>Filters</h2>
+        <label>Person
+          <select id="an-person"></select>
+        </label>
+        <label>Metric type
+          <select id="an-metric"></select>
+        </label>
+        <label>From
+          <input type="date" id="an-from">
+        </label>
+        <label>To
+          <input type="date" id="an-to">
+        </label>
+        <div class="actions">
+          <button type="button" class="secondary" id="an-clear">Clear filters</button>
+        </div>
+
+        <!-- Exports the readings that match the filters above. -->
+        <div class="export">
+          <h3>Export filtered readings</h3>
+          <div class="actions">
+            <button type="button" id="an-export-csv">Download CSV</button>
+            <button type="button" id="an-export-json">Download JSON</button>
+          </div>
+        </div>
+      </form>
+
+      <div class="card">
+        <h2>Results over time</h2>
+        <div id="chart" class="chart"></div>
+        <ul id="chart-legend" class="legend"></ul>
+        <table id="an-stats">
+          <thead><tr><th>Series</th><th class="num">Readings</th><th class="num">Min</th><th class="num">Avg</th><th class="num">Max</th><th class="num">Latest</th></tr></thead>
+          <tbody id="an-stat-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Administration -->
+    <section id="administration" class="admin" hidden>
+      <nav class="subnav">
+        <button type="button" class="subtab active" data-subtab="persons">People</button>
+        <button type="button" class="subtab" data-subtab="metric-types">Metric types</button>
+      </nav>
+
     <!-- People (PERSON) -->
-    <section id="persons" class="panel" hidden>
+    <section id="persons" class="subpanel">
       <form id="person-form" class="card">
         <h2 id="person-form-title">Add person</h2>
         <input type="hidden" name="id">
@@ -84,7 +132,7 @@
     </section>
 
     <!-- Metric types (METRIC_TYPE) -->
-    <section id="metric-types" class="panel" hidden>
+    <section id="metric-types" class="subpanel" hidden>
       <form id="metric-type-form" class="card">
         <h2 id="metric-type-form-title">Add metric type</h2>
         <input type="hidden" name="id">
@@ -103,6 +151,7 @@
           <tbody id="metric-type-rows"></tbody>
         </table>
       </div>
+    </section>
     </section>
   </main>
 

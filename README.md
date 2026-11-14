@@ -102,12 +102,45 @@ The page has three tabs:
   metric type, a value and an optional date and time; if you leave the date
   blank, the current time is used. You can filter the list by person and
   metric type.
-- **People:** add, edit or delete people.
-- **Metric types:** add, edit or delete metric types (for example
-  `BSL`, Blood Sugar Level).
+- **Analytics:** a line graph of readings over time, with one line per person
+  and metric type, a legend and a table of count, min, average, max and latest
+  value. Filter by person, metric type and a from/to date range (inclusive).
+  The graph is drawn as plain SVG, so it needs no charting library.
+  **Download CSV** and **Download JSON** export the readings that match the
+  current filters (see [Exporting readings](#exporting-readings)).
+- **Administration:** two sub-sections, **People** and **Metric types**, to
+  add, edit or delete people and metric types (for example `BSL`, Blood Sugar
+  Level).
 
 Errors from the API, such as a duplicate name or deleting a person who still
 has readings, appear in a banner at the top of the page.
+
+### Exporting readings
+
+On the Analytics tab, **Download CSV** and **Download JSON** save the readings
+that match the person, metric type and date filters, so what you export is what
+the graph shows. If no readings match, nothing is saved and a message says so.
+The file is named `track-my-sugar-readings-YYYY-MM-DD.csv` (or `.json`).
+
+Readings are ordered oldest first and each has these fields:
+
+| Field | Description |
+|---|---|
+| `id` | Reading id |
+| `person_id`, `person` | Person id and name |
+| `metric_type_id`, `metric_type` | Metric type id and short name (for example `BSL`) |
+| `health_metric` | The value |
+| `created_date_time` | `YYYY-MM-DD HH:MM:SS` |
+
+- **CSV** has a header row, CRLF line endings (RFC 4180) and a UTF-8 byte order
+  mark so Excel shows accented names correctly. Text that starts with `=`, `+`,
+  `-` or `@` gets a leading apostrophe so a spreadsheet shows it as text and
+  doesn't run it as a formula.
+- **JSON** is an array of objects with the same fields.
+
+In a browser this is a normal download. In the Android app the file is saved to
+the phone's **Downloads** folder (a second export on the same day is stored as
+`...(1).csv`).
 
 ## REST API
 
@@ -211,3 +244,25 @@ gradle wrapper        # once, to generate ./gradlew
 ```
 
 The app's data lives in its own private database, separate from `db/tms_db`.
+It needs Android 10 (API 29) or newer, because exports are written to
+Downloads with `MediaStore.Downloads`.
+
+### Android tests
+
+The tests run on a device or emulator (start one first, for example an AVD
+with an Android 35 image):
+
+```sh
+cd android
+./gradlew connectedDebugAndroidTest
+```
+
+- `ApiTest` is a port of `api_test.clj` and checks the Kotlin API against
+  on-device SQLite.
+- `UiTest` drives the real front end inside the app's WebView: tabs, adding,
+  editing and deleting everything, the analytics graph and filters, and the CSV
+  and JSON exports. It reads the exported files back from Downloads.
+
+The Clojure tests (`clojure -M:test`) don't cover the front end. The browser
+download path (a `Blob` link) is only used outside the app and has no automated
+test.

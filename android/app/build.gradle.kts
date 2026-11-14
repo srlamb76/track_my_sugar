@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.trackmysugar"
-        minSdk = 24
+        minSdk = 29  // MediaStore.Downloads (used by export) needs API 29+
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
