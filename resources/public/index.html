@@ -16,6 +16,7 @@
     <h1>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#fff" d="M12 2.5c-.4 0-.8.2-1 .5C8.4 6.6 5.5 10 5.5 14a6.5 6.5 0 0 0 13 0c0-4-2.9-7.400-5.500-11-.2-.3-.6-.5-1-.5z"/><path fill="#0b7d5e" fill-opacity=".35" d="M9 14.500a3 3 0 0 0 3 3v-1.500a1.500 1.500 0 0 1-1.500-1.500H9z"/></svg>
       Track My Sugar
+      <span id="app-version" class="version" hidden></span>
     </h1>
     <nav>
       <button type="button" class="tab active" data-tab="readings">Readings</button>
@@ -40,9 +41,9 @@
           <select name="metric_type_id" required></select>
         </label>
         <label>Value
-          <input type="number" name="health_metric" step="any" required>
+          <input type="number" name="health_metric" step="any" inputmode="decimal" required placeholder="e.g. 7.3">
         </label>
-        <label>Date &amp; time <small>(blank = now)</small>
+        <label>Date &amp; time <small>(defaults to now)</small>
           <input type="datetime-local" name="created_date_time" step="1">
         </label>
         <div class="actions">

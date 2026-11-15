@@ -104,8 +104,8 @@ Build output (`target/`) and tool caches (`.cpcache/`, `.lsp/`) are ignored too.
 The page has three tabs:
 
 - **Readings:** add, edit or delete readings. Each reading has a person, a
-  metric type, a value and an optional date and time; if you leave the date
-  blank, the current time is used. You can filter the list by person and
+  metric type, a value (decimals such as 7.3 are fine) and a date and time that
+  defaults to now; if you clear the date, the current time is used. You can filter the list by person and
   metric type.
 - **Analytics:** a line graph of readings over time, with one line per person
   and metric type, a legend and a table of count, min, average, max and latest
@@ -299,6 +299,29 @@ The app's data lives in its own private database, separate from `db/tms_db`.
 It needs Android 10 (API 29) or newer, because exports are written to
 Downloads with `MediaStore.Downloads`.
 
+### Version
+
+The version lives in one file, `resources/public/version.txt` (`MAJOR.MINOR.PATCH`).
+The web page shows it next to the title, the Android `versionName` is that
+text, and `versionCode` is `MAJOR*10000 + MINOR*100 + PATCH`. The Android launch
+screen shows it too, but as part of an image, so after changing the version run
+`python3 android/branding/make_assets.py`. The Android build fails with that
+reminder if you forget, and a Clojure test checks it as well.
+
+### Icon and launch screen
+
+The launcher icon is a ball-and-stick glucose molecule above "TMS" on the app's
+green gradient (an adaptive icon, with a single-colour layer for Android 13+
+themed icons). The launch screen shows the same molecule and "TMS" on green, and
+on Android 12+ the "TMS - TrackMySugar" wordmark underneath. It stays up until
+the page has loaded, so there is no white flash. The app is named
+"TrackMySugar" on the home screen (the full name doesn't fit under an icon).
+
+The artwork is generated, not hand-drawn: `android/branding/make_assets.py`
+writes the SVG sources and the PNGs in `res/`. Run `python3 make_assets.py`
+there (needs `rsvg-convert` and the Noto Sans Bold font) to change it. The PNGs
+are committed, so building the app doesn't need the script.
+
 ### Android tests
 
 The tests run on a device or emulator (start one first, for example an AVD
@@ -311,6 +334,7 @@ cd android
 
 - `ApiTest` is a port of `api_test.clj` and checks the Kotlin API against
   on-device SQLite.
+- `BrandingTest` checks the app name, adaptive icon and launch-screen theme.
 - `UiTest` drives the real front end inside the app's WebView: tabs, adding,
   editing and deleting everything, the analytics graph and filters, and the CSV
   and JSON exports. It reads the exported files back from Downloads.

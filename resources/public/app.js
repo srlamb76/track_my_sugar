@@ -103,7 +103,7 @@ function fromInputDate(s) {
 }
 
 // Generic form controller: handles add vs. edit mode for a CRUD form.
-function crudForm({ form, title, noun, resource, toPayload, onSaved }) {
+function crudForm({ form, title, noun, resource, toPayload, onSaved, afterReset }) {
   const formEl = $(form);
   const titleEl = $(title);
 
@@ -111,6 +111,7 @@ function crudForm({ form, title, noun, resource, toPayload, onSaved }) {
     formEl.reset();
     formEl.elements.id.value = '';
     titleEl.textContent = `Add ${noun}`;
+    if (afterReset) afterReset();  // e.g. refill a default that reset() clears
   }
 
   function edit(row) {
@@ -272,7 +273,22 @@ const readingForm = crudForm({
     return payload;
   },
   onSaved: loadReadings,
+  afterReset: () => setNowDefault(),
 });
+
+// Pre-fills "Date & time" with the current local time, so a new reading is
+// stamped now unless the user changes it. It is refreshed whenever the form
+// resets and when the Readings tab is shown, so it never goes stale on a page
+// left open. Skipped while editing, which must keep the reading's own time.
+function setNowDefault() {
+  const f = $('#reading-form').elements;
+  if (f.id.value) return;
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  f.created_date_time.value =
+    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+setNowDefault();
 
 tableActions({
   tbody: '#reading-rows', rows: () => state.readings, resource: 'health-details',
@@ -585,7 +601,7 @@ document.querySelectorAll('header .tab').forEach((tab) => {
     if (tab.dataset.tab !== 'analytics') releaseAnalytics();
     // Re-read the data so the chart and lists reflect any recent changes.
     if (tab.dataset.tab === 'analytics') run(async () => { await Promise.all([loadPersons(), loadMetricTypes()]); await loadAnalytics(); });
-    if (tab.dataset.tab === 'readings') run(loadReadings);
+    if (tab.dataset.tab === 'readings') { setNowDefault(); run(loadReadings); }
   });
 });
 
@@ -596,6 +612,19 @@ document.querySelectorAll('.subnav .subtab').forEach((tab) => {
     document.querySelectorAll('.subpanel').forEach((p) => { p.hidden = p.id !== tab.dataset.subtab; });
   });
 });
+
+// Shows the app version (the single source is version.txt, which the Android
+// build also reads). A failure just leaves the badge hidden.
+fetch('version.txt', { cache: 'no-cache' })
+  .then((res) => (res.ok ? res.text() : Promise.reject(new Error('no version'))))
+  .then((text) => {
+    const version = text.trim();
+    if (!/^\d+\.\d+\.\d+$/.test(version)) return;
+    const badge = $('#app-version');
+    badge.textContent = `v${version}`;
+    badge.hidden = false;
+  })
+  .catch(() => {});
 
 run(async () => {
   await Promise.all([loadPersons(), loadMetricTypes()]);

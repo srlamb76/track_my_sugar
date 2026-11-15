@@ -296,3 +296,17 @@
           h (create! "/api/health-details" {:person_id (:id person) :metric_type_id (:id bsl) :health_metric 5.0})]
       (is (= [] (:body (call :get (str "/api/persons/" (:id other) "/health-details")))))
       (is (= [h] (:body (call :get (str "/api/persons/" (:id person) "/health-details"))))))))
+
+;; ---------------------------------------------------------------------------
+;; Version
+
+(deftest serves-the-app-version
+  (let [{:keys [status headers body]} (*app* (mock/request :get "/version.txt"))
+        version (str/trim (slurp body))]
+    (is (= 200 status))
+    (is (re-matches #"\d+\.\d+\.\d+" version) "MAJOR.MINOR.PATCH")
+    (testing "the web page has a place to show it"
+      (is (str/includes? (slurp (io/file "resources/public/index.html")) "id=\"app-version\"")))
+    (testing "the Android launch-screen artwork was generated for this version"
+      (is (str/includes? (slurp (io/file "android/branding/wordmark.svg")) (str "Version " version))
+          "run: python3 android/branding/make_assets.py"))))

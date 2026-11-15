@@ -3,6 +3,25 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// One version for web and Android: resources/public/version.txt ("MAJOR.MINOR.PATCH").
+// The web header shows it, versionName is it, and versionCode is derived from it.
+val appVersion = file("../../resources/public/version.txt").readText().trim()
+val versionParts = appVersion.split(".").map { it.toInt() }
+require(versionParts.size == 3) { "version.txt must look like 1.2.3, was '$appVersion'" }
+
+// The launch screen shows the version as part of an image, so a version change
+// needs `python3 branding/make_assets.py`; fail the build rather than ship a stale one.
+val checkBranding by tasks.registering {
+    val wordmark = file("../branding/wordmark.svg")
+    inputs.files(wordmark, file("../../resources/public/version.txt"))
+    doLast {
+        check(wordmark.readText().contains("Version $appVersion")) {
+            "The launch screen artwork doesn't show version $appVersion. Run: python3 android/branding/make_assets.py"
+        }
+    }
+}
+tasks.named("preBuild") { dependsOn(checkBranding) }
+
 android {
     namespace = "com.trackmysugar"
     compileSdk = 35
@@ -11,8 +30,8 @@ android {
         applicationId = "com.trackmysugar"
         minSdk = 29  // MediaStore.Downloads (used by export) needs API 29+
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = versionParts[0] * 10000 + versionParts[1] * 100 + versionParts[2]
+        versionName = appVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -44,6 +63,7 @@ android {
 
 dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
+    implementation("androidx.core:core-splashscreen:1.2.0")  // launch screen on all supported versions
 
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")

@@ -1,8 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Theme once the app is running (after the launch screen). -->
     <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
         <item name="android:statusBarColor">#0B7D5E</item>
         <item name="android:navigationBarColor">#0B7D5E</item>
         <item name="android:windowBackground">#F1F5F4</item>
+    </style>
+
+    <!-- Launch screen: green background and the molecule + "TMS" icon. On
+         Android 12+ values-v31 adds the "TMS - TrackMySugar" wordmark underneath
+         (the compat library has no branding attribute for older versions). -->
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#0B7D5E</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
+        <item name="postSplashScreenTheme">@style/AppTheme</item>
     </style>
 </resources>

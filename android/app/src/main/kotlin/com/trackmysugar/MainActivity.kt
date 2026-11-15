@@ -5,6 +5,8 @@ import android.app.Activity
 import android.content.ContentValues
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
@@ -14,6 +16,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -34,6 +37,9 @@ class MainActivity : Activity() {
     internal lateinit var webView: WebView
     private lateinit var database: Database
     private lateinit var api: Api
+
+    /** True once the page has loaded (or the safety timeout passed); the launch screen waits for it. */
+    private var pageReady = false
 
     /** Exposed to JavaScript as `TmsNative`. */
     private inner class Bridge {
@@ -58,6 +64,10 @@ class MainActivity : Activity() {
 
     /** Lets only the app's own origin load; everything else is refused. */
     private inner class GuardedClient(private val assetLoader: WebViewAssetLoader) : WebViewClient() {
+        override fun onPageFinished(view: WebView, url: String) {
+            pageReady = true
+        }
+
         private fun isOurs(request: WebResourceRequest) =
             request.url.scheme == "https" && request.url.host == ASSET_HOST
 
@@ -71,6 +81,13 @@ class MainActivity : Activity() {
 
     @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Show the launch screen until the page is drawn, so there is no blank
+        // white flash while the WebView starts. The timeout means a failed load
+        // can never leave the user stuck on it.
+        val splash = installSplashScreen()
+        splash.setKeepOnScreenCondition { !pageReady }
+        Handler(Looper.getMainLooper()).postDelayed({ pageReady = true }, SPLASH_TIMEOUT_MS)
+
         super.onCreate(savedInstanceState)
         database = Database(this)
         api = Api(database.writableDatabase)
@@ -158,6 +175,7 @@ class MainActivity : Activity() {
     private companion object {
         const val ASSET_HOST = "appassets.androidplatform.net"
         const val MAX_EXPORT_CHARS = 10_000_000
+        const val SPLASH_TIMEOUT_MS = 3000L
         val EXPORT_TYPES = mapOf("text/csv" to "csv", "application/json" to "json")
     }
 }

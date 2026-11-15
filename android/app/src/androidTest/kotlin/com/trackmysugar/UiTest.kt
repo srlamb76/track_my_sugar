@@ -167,7 +167,7 @@ class UiTest {
 
     @Test
     fun startsWithEmptyStatesAndAllTabsWork() {
-        assertEquals("Track My Sugar", text("h1").trim())
+        assertTrue(text("h1").startsWith("Track My Sugar"))  // the version badge follows the title
         assertTrue(text("#reading-rows").contains("No readings yet"))
         tab("persons")
         assertTrue(text("#person-rows").contains("No people yet"))
@@ -550,6 +550,17 @@ class UiTest {
         assertEquals("", JSONArray("[" + js("csvField(null)") + "]").getString(0))
     }
 
+    // ---- Version ---------------------------------------------------------
+
+    @Test
+    fun headerShowsTheAppVersion() {
+        val version = context.assets.open("public/version.txt").bufferedReader().use { it.readText() }.trim()
+        waitFor("!document.getElementById('app-version').hidden")
+        assertEquals("v$version", text("#app-version"))
+        // It sits in the header, next to the title.
+        assertEquals("true", js("document.querySelector('header').contains(document.getElementById('app-version'))").trim('"'))
+    }
+
     // ---- Security --------------------------------------------------------
 
     @Test
@@ -625,5 +636,73 @@ class UiTest {
         tab("readings")
         assertEquals("0", js("state.allReadings.length").trim('"'))
         assertEquals("", js("document.querySelector('#chart').innerHTML").trim('"'))
+    }
+
+    // ---- Reading form defaults and decimal values -------------------------
+
+    private fun formValue(name: String) =
+        js("document.querySelector('#reading-form').elements.$name.value").trim('"')
+
+    /** Milliseconds between the form's date field and the device clock. */
+    private fun dateFieldAgeMs() =
+        js("Date.now() - new Date(document.querySelector('#reading-form').elements.created_date_time.value).getTime()").toDouble()
+
+    private fun selectFirstPersonAndMetric() = js("""(function(){
+        var f = document.querySelector('#reading-form');
+        f.elements.person_id.selectedIndex = 0; f.elements.metric_type_id.selectedIndex = 0; })()""")
+
+    @Test
+    fun dateFieldDefaultsToNow() {
+        assertTrue(formValue("created_date_time"),
+            Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?").matches(formValue("created_date_time")))
+        assertTrue(dateFieldAgeMs() in -5_000.0..120_000.0)
+    }
+
+    @Test
+    fun valueFieldAcceptsDecimalsAndShowsADecimalKeypad() {
+        assertEquals("decimal", js("document.querySelector('[name=health_metric]').getAttribute('inputmode')").trim('"'))
+        for (v in listOf("7.3", "7.35", "0.5", "120", "-1.5")) {
+            js("document.querySelector('#reading-form').elements.health_metric.value = '$v'")
+            assertEquals("$v is valid", "true", js("document.querySelector('#reading-form').elements.health_metric.validity.valid").trim('"'))
+            assertEquals(v.toDouble(), js("document.querySelector('#reading-form').elements.health_metric.valueAsNumber").toDouble(), 0.0)
+        }
+    }
+
+    @Test
+    fun savingWithoutTouchingTheDateStampsNowAndStoresTheDecimal() {
+        addMetric(); addPerson()
+        tab("readings")
+        selectFirstPersonAndMetric()
+        val shown = formValue("created_date_time")
+        submit("#reading-form", "health_metric" to "7.3")   // date left at its default
+        waitToast("Reading added")
+        assertTrue(text("#reading-rows").contains("7.3"))
+        val stored = JSONObject(JSONArray("[" + js("TmsNative.request('GET', '/api/health-details', null)") + "]").getString(0))
+            .let { JSONArray(it.getString("body")).getJSONObject(0) }
+        assertEquals(7.3, stored.getDouble("health_metric"), 0.0)
+        // Stamped with the default shown in the form (to the minute at least).
+        assertEquals(shown.replace('T', ' ').take(16), stored.getString("created_date_time").take(16))
+    }
+
+    @Test
+    fun dateDefaultReturnsAfterSavingAndCancelling() {
+        addMetric(); addPerson()
+        addReading("Steve", "BSL", "7.3", "2020-01-01T08:00")
+        // After a save the form is back to "now", not the old date.
+        assertTrue(dateFieldAgeMs() in -5_000.0..120_000.0)
+        // Editing shows the reading's own time...
+        clickRowButton("#reading-rows", "data-edit", "7.3")
+        assertTrue(formValue("created_date_time").startsWith("2020-01-01T08:00"))
+        // ...and Cancel returns to now.
+        js("document.querySelector('#reading-form [data-cancel]').click()")
+        assertTrue(dateFieldAgeMs() in -5_000.0..120_000.0)
+    }
+
+    @Test
+    fun dateDefaultRefreshesWhenReturningToReadings() {
+        js("document.querySelector('#reading-form').elements.created_date_time.value = '2020-01-01T00:00:00'")
+        tab("analytics")
+        tab("readings")
+        assertTrue(dateFieldAgeMs() in -5_000.0..120_000.0)
     }
 }

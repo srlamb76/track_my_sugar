@@ -82,6 +82,17 @@ h1 {
   font-weight: 700;
   letter-spacing: -.01em;
 }
+/* App version next to the title, filled in from version.txt. */
+.version {
+  align-self: center;
+  padding: .05rem .5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .2);
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+.version[hidden] { display: none; }
 h1 svg { width: 1.6rem; height: 1.6rem; flex: none; }
 h2 { margin: 0 0 .9rem; font-size: 1.05rem; font-weight: 650; }
 
