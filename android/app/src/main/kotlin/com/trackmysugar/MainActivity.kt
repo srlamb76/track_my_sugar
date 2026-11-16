@@ -3,6 +3,7 @@ package com.trackmysugar
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ContentValues
+import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
@@ -89,7 +90,11 @@ class MainActivity : Activity() {
         Handler(Looper.getMainLooper()).postDelayed({ pageReady = true }, SPLASH_TIMEOUT_MS)
 
         super.onCreate(savedInstanceState)
-        database = Database(this)
+        // Debug builds only: tests pass their own database name so they can never
+        // touch the real readings. Release builds always use the real database.
+        val debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        val testDb = if (debuggable) intent.getStringExtra(EXTRA_DB_NAME) else null
+        database = Database(this, testDb ?: Database.DEFAULT_NAME)
         api = Api(database.writableDatabase)
 
         val assetLoader = WebViewAssetLoader.Builder()
@@ -172,10 +177,13 @@ class MainActivity : Activity() {
             ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: safeName
     }
 
-    private companion object {
-        const val ASSET_HOST = "appassets.androidplatform.net"
-        const val MAX_EXPORT_CHARS = 10_000_000
-        const val SPLASH_TIMEOUT_MS = 3000L
-        val EXPORT_TYPES = mapOf("text/csv" to "csv", "application/json" to "json")
+    companion object {
+        /** Debug builds: database name to use instead of the real one (for tests). */
+        const val EXTRA_DB_NAME = "com.trackmysugar.DB_NAME"
+
+        private const val ASSET_HOST = "appassets.androidplatform.net"
+        private const val MAX_EXPORT_CHARS = 10_000_000
+        private const val SPLASH_TIMEOUT_MS = 3000L
+        private val EXPORT_TYPES = mapOf("text/csv" to "csv", "application/json" to "json")
     }
 }

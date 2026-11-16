@@ -42,6 +42,56 @@
                 "CREATE INDEX IF NOT EXISTS health_detail_time_idx ON HEALTH_DETAIL(created_date_time)"]]
     (jdbc/execute! ds [stmt])))
 
+(def schema-version
+  "Version of the database layout, kept in SQLite's `PRAGMA user_version`.
+  Raise it and add a step to `migrations` for every schema change."
+  2)
+
+(defn- user-version [ds]
+  (:user_version (jdbc/execute-one! ds ["PRAGMA user_version"] opts)))
+
+(defn- table-exists? [ds table]
+  (boolean (seq (jdbc/execute! ds ["SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?" table]))))
+
+(def ^:private migrations
+  "Target version -> function that upgrades a database from the version
+  before it. Steps must only add or convert; never drop user data."
+  {2 ensure-indexes!})
+
+(defn migrate!
+  "Brings an existing database up to `schema-version` without losing data, so
+  installing a newer version of the app over old data is safe.
+
+  - Steps run in order, each in its own transaction (a failure rolls that step
+    back and leaves earlier ones in place).
+  - A database from before versions were tracked (user_version 0 but already
+    holding tables) counts as version 1.
+  - A database from a NEWER app than this one is refused (ex-info) rather than
+    opened, so an older build can't damage it.
+  - When `db-path` is given and steps are pending, the file is first copied to
+    `<db-path>.bak-v<old-version>`.
+  - A file with no tables is left alone (create it from schema.sql)."
+  ([ds] (migrate! ds nil))
+  ([ds db-path]
+   (when (table-exists? ds "PERSON")
+     (let [stored  (user-version ds)
+           current (if (zero? stored) 1 stored)]
+       (when (> current schema-version)
+         (throw (ex-info (str "The database is from a newer version of Track My Sugar (layout "
+                              current ", this one understands " schema-version ")")
+                         {:found current :supported schema-version})))
+       (when (< current schema-version)
+         (when db-path
+           (java.nio.file.Files/copy (.toPath (java.io.File. ^String db-path))
+                                     (.toPath (java.io.File. (str db-path ".bak-v" current)))
+                                     (into-array java.nio.file.CopyOption
+                                                 [java.nio.file.StandardCopyOption/REPLACE_EXISTING])))
+         (doseq [v (range (inc current) (inc schema-version))]
+           (jdbc/with-transaction [tx ds]
+             ((get migrations v #(throw (ex-info (str "No migration to version " v) {:version v}))) tx)
+             (jdbc/execute! tx [(str "PRAGMA user_version = " v)]))))
+       schema-version))))
+
 (defn init-schema!
   "Executes each statement in the SQL file at `schema-path` against `ds`.
   Useful for building a fresh database (e.g. in tests)."
@@ -50,7 +100,9 @@
     (doseq [stmt (->> (str/split (slurp schema-path) #";")
                       (map str/trim)
                       (remove str/blank?))]
-      (jdbc/execute! tx [stmt]))))
+      (jdbc/execute! tx [stmt]))
+    ;; A brand-new database starts at the current layout.
+    (jdbc/execute! tx [(str "PRAGMA user_version = " schema-version)])))
 
 ;; ---------------------------------------------------------------------------
 ;; Generic helpers

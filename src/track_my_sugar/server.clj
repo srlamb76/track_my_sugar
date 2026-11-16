@@ -22,7 +22,9 @@
     :or {port 3000 db-path db/default-db-path host "127.0.0.1"
          allowed-hosts loopback-hosts join? false}}]
   (let [ds (db/datasource db-path)]
-    (db/ensure-indexes! ds)
+    ;; Upgrade an existing database in place (after backing it up); refuses a
+    ;; database from a newer version rather than risk damaging it.
+    (db/migrate! ds db-path)
     (jetty/run-jetty (api/app ds allowed-hosts)
                      {:host host
                       :port port
@@ -40,7 +42,10 @@
         db-path (or db-path (System/getenv "TMS_DB") db/default-db-path)
         host    (or (System/getenv "TMS_HOST") "127.0.0.1")
         extra   (some->> (System/getenv "TMS_ALLOWED_HOSTS") (re-seq #"[^,\s]+") (map str/lower-case))]
-    (println (str "Track My Sugar running on http://" host ":" port " (db: " db-path ")"))
+    ;; The absolute path makes it obvious when a different working directory
+    ;; has picked a different (empty) database than the one holding your data.
+    (println (str "Track My Sugar running on http://" host ":" port
+                  " (db: " (.getAbsolutePath (java.io.File. ^String db-path)) ")"))
     (when-not (contains? #{"127.0.0.1" "localhost" "::1"} host)
       (println "WARNING: listening beyond loopback and there is no login; anyone who can"
                "reach this port can read and change every record."))

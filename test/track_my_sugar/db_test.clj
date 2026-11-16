@@ -197,3 +197,81 @@
       (db/ensure-indexes! *ds*)
       (db/ensure-indexes! *ds*)
       (is (every? (names) wanted)))))
+
+;; ---------------------------------------------------------------------------
+;; Upgrades keep the user's data
+
+(def ^:private old-schema
+  "The layout before versions were tracked: no indexes, user_version 0."
+  ["CREATE TABLE PERSON (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, email TEXT UNIQUE)"
+   "CREATE TABLE HEALTH_DETAIL (id INTEGER PRIMARY KEY, person_id INTEGER REFERENCES PERSON(id), health_metric REAL NOT NULL, metric_type_id INTEGER NOT NULL REFERENCES METRIC_TYPE(id), created_date_time NUMERIC NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+   "CREATE TABLE METRIC_TYPE (id INTEGER PRIMARY KEY, type TEXT NOT NULL UNIQUE, description TEXT NOT NULL UNIQUE)"])
+
+(defn- old-database!
+  "Creates a database file in the pre-versioning layout holding real-looking data."
+  []
+  (let [file (File/createTempFile "tms_old" ".db")
+        ds   (db/datasource (.getPath file))]
+    (doseq [stmt old-schema] (next.jdbc/execute! ds [stmt]))
+    (next.jdbc/execute! ds ["INSERT INTO PERSON (name, email) VALUES ('Steve', 's@x.com'), ('Jo', NULL)"])
+    (next.jdbc/execute! ds ["INSERT INTO METRIC_TYPE (type, description) VALUES ('BSL', 'Blood Sugar Level')"])
+    (next.jdbc/execute! ds ["INSERT INTO HEALTH_DETAIL (person_id, health_metric, metric_type_id, created_date_time) VALUES (1, 5.6, 1, '2026-01-01 08:00:00'), (2, 7.25, 1, '2026-01-02 09:30:00')"])
+    {:file file :ds ds}))
+
+(defn- snapshot [ds]
+  {:persons (db/list-persons ds)
+   :types   (db/list-metric-types ds)
+   :details (db/list-health-details ds)})
+
+(deftest migrate-keeps-existing-data
+  (let [{:keys [file ds]} (old-database!)
+        before (snapshot ds)
+        names  #(set (map :name (next.jdbc/execute! ds ["SELECT name FROM sqlite_master WHERE type = 'index'"]
+                                                    {:builder-fn next.jdbc.result-set/as-unqualified-lower-maps})))]
+    (try
+      (is (= 2 (count (:persons before))))
+      (is (nil? (some #{"health_detail_person_idx"} (names))) "old layout has no indexes")
+      (testing "migrating adds the indexes and records the version"
+        (is (= db/schema-version (db/migrate! ds (.getPath file))))
+        (is (contains? (names) "health_detail_person_idx"))
+        (is (= db/schema-version (:user_version (next.jdbc/execute-one! ds ["PRAGMA user_version"]
+                                                                       {:builder-fn next.jdbc.result-set/as-unqualified-lower-maps})))))
+      (testing "every row survives unchanged"
+        (is (= before (snapshot ds))))
+      (testing "a backup of the old file was written first"
+        (let [bak (File. (str (.getPath file) ".bak-v1"))]
+          (is (.exists bak))
+          (is (= before (snapshot (db/datasource (.getPath bak)))))
+          (.delete bak)))
+      (testing "running it again changes nothing"
+        (db/migrate! ds (.getPath file))
+        (is (= before (snapshot ds)))
+        (is (not (.exists (File. (str (.getPath file) ".bak-v1")))) "no backup when nothing was pending"))
+      (testing "new data can be added after the upgrade"
+        (db/create-person! ds {:name "New"})
+        (is (= 3 (count (db/list-persons ds)))))
+      (finally (.delete file)))))
+
+(deftest migrate-refuses-a-newer-database
+  (let [{:keys [file ds]} (old-database!)]
+    (try
+      (next.jdbc/execute! ds [(str "PRAGMA user_version = " (inc db/schema-version))])
+      (let [before (snapshot ds)
+            e (try (db/migrate! ds) nil (catch clojure.lang.ExceptionInfo e e))]
+        (is (some? e) "an older build must not open a newer database")
+        (is (re-find #"newer version" (ex-message e)))
+        (is (= before (snapshot ds)) "and must leave the data alone"))
+      (finally (.delete file)))))
+
+(deftest fresh-databases-start-at-the-current-version
+  (is (= db/schema-version (:user_version (next.jdbc/execute-one! *ds* ["PRAGMA user_version"]
+                                                                  {:builder-fn next.jdbc.result-set/as-unqualified-lower-maps}))))
+  (testing "migrating a current database is a no-op"
+    (db/create-person! *ds* {:name "Keep"})
+    (is (= db/schema-version (db/migrate! *ds*)))
+    (is (= ["Keep"] (map :name (db/list-persons *ds*))))))
+
+(deftest migrate-leaves-an-empty-file-alone
+  (let [file (File/createTempFile "tms_empty" ".db")]
+    (try (is (nil? (db/migrate! (db/datasource (.getPath file)))))
+         (finally (.delete file)))))

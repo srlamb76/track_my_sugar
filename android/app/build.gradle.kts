@@ -22,6 +22,22 @@ val checkBranding by tasks.registering {
 }
 tasks.named("preBuild") { dependsOn(checkBranding) }
 
+// The instrumented tests install the app and test APK, then uninstall them, which
+// deletes the app's data. Refuse to run them on anything but an emulator unless
+// told otherwise, so a real phone's readings can't be wiped by accident.
+tasks.configureEach {
+    if (name.startsWith("connected") && name.endsWith("AndroidTest")) {
+        doFirst {
+            val serial = System.getenv("ANDROID_SERIAL") ?: ""
+            check(serial.startsWith("emulator-") || project.hasProperty("allowRealDevices")) {
+                "Instrumented tests uninstall the app, which deletes its data. Run them on an emulator: " +
+                    "ANDROID_SERIAL=emulator-5554 ./gradlew connectedDebugAndroidTest " +
+                    "(or pass -PallowRealDevices to override)."
+            }
+        }
+    }
+}
+
 android {
     namespace = "com.trackmysugar"
     compileSdk = 35

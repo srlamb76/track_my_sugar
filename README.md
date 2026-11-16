@@ -223,6 +223,45 @@ Not covered: encryption of the SQLite file at rest (rely on device or disk
 encryption), and authentication for multi-user use. If you need either, say so;
 both are real design changes.
 
+## Upgrading without losing data
+
+**Android.** Installing a newer version over an old one (`adb install -r`, or
+opening a newer APK) keeps the app's data; the readings live in the app's
+private storage, outside the APK. On first launch the new version upgrades the
+database in place (`Database.onUpgrade`): each step only adds or converts, runs
+in one transaction (a failure rolls back), and an unknown step fails loudly
+instead of being skipped. `UpgradeTest` builds a version 1 database with
+readings, opens it with the current code and checks every reading survives; I
+also installed the original 1.0 build, added readings, installed the current one
+over it and confirmed the same rows and the new indexes.
+
+Things that *do* lose the data, and how to avoid them:
+
+- **Uninstalling.** Android deletes the data with the app. The app sets
+  `hasFragileUserData`, so Android offers to keep the data when you uninstall.
+- **A different signing key.** Android refuses to update an app signed with a
+  different key, and the only way round it is to uninstall first. Debug builds
+  are signed with `~/.android/debug.keystore` and release builds with your own
+  keystore. Keep a backup of whichever key you use, and always build updates
+  with the same one.
+- **Backups are off** (`allowBackup="false"`, for privacy), so data is not
+  restored to a new phone. Use the CSV or JSON export on the Analytics tab to
+  keep a copy.
+- **Running the instrumented tests on a phone.** Gradle uninstalls the app after
+  them. The tests use their own database (never the real one) and the Gradle
+  build refuses to run them unless `ANDROID_SERIAL` names an emulator:
+  `ANDROID_SERIAL=emulator-5554 ./gradlew connectedDebugAndroidTest`.
+
+**Server.** The database is a plain SQLite file outside the jar (`db/tms_db` by
+default), so replacing the jar never touches it. On start the server upgrades an
+older file in place (`db/migrate!`, using SQLite's `user_version`), after
+copying it to `<file>.bak-v<old version>`. A file written by a *newer* version is
+refused instead of opened, and the startup line prints the database's absolute
+path, so a different working directory can't silently pick an empty database.
+To add a schema change: raise `schema-version` (and `DB_VERSION` in `Database.kt`),
+add a step to `migrations` and the matching branch in `Database.migrate`, and
+update `schema.sql` for new installs.
+
 ## Performance and memory
 
 - `HEALTH_DETAIL` has indexes on person, metric type and date (`schema.sql`).

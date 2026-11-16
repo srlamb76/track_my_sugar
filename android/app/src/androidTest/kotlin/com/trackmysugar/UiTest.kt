@@ -1,5 +1,6 @@
 package com.trackmysugar
 
+import android.content.Intent
 import android.provider.MediaStore
 import android.webkit.WebView
 import androidx.test.core.app.ActivityScenario
@@ -20,6 +21,10 @@ import java.util.concurrent.TimeUnit
  * DOM click or form submit, answered by the native bridge and SQLite.
  */
 class UiTest {
+    private companion object {
+        const val TEST_DB = "tms_ui_test.db"
+    }
+
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private var scenario: ActivityScenario<MainActivity>? = null
@@ -27,7 +32,7 @@ class UiTest {
 
     @Before
     fun setUp() {
-        context.deleteDatabase(Database.DEFAULT_NAME)
+        context.deleteDatabase(TEST_DB)
         deleteExports()
         launch()
     }
@@ -35,7 +40,7 @@ class UiTest {
     @After
     fun tearDown() {
         scenario?.close()
-        context.deleteDatabase(Database.DEFAULT_NAME)
+        context.deleteDatabase(TEST_DB)
         deleteExports()
     }
 
@@ -72,7 +77,10 @@ class UiTest {
 
     private fun launch() {
         scenario?.close()
-        scenario = ActivityScenario.launch(MainActivity::class.java)
+        // A separate database name, so these tests never touch the app's real data.
+        scenario = ActivityScenario.launch(
+            Intent(context, MainActivity::class.java).putExtra(MainActivity.EXTRA_DB_NAME, TEST_DB)
+        )
         scenario!!.onActivity { web = it.webView }
         waitFor("document.readyState === 'complete' && !!document.querySelector('#reading-rows tr')")
         // Auto-accept confirm() so delete flows can be driven.
