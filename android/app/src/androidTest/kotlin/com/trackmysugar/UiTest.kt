@@ -713,4 +713,46 @@ class UiTest {
         tab("readings")
         assertTrue(dateFieldAgeMs() in -5_000.0..120_000.0)
     }
+
+    // ---- Layout alignment (phone width) ------------------------------------
+
+    @Test
+    fun readingTimestampStaysOnOneLine() {
+        addMetric(); addPerson()
+        addReading("Steve", "BSL", "7.3", "2026-01-01T08:00")
+        addReading("Steve", "BSL", "12.25", "2026-01-09T21:45")
+        // Each "When" cell is a single line (date and time together), and starts at the row's left edge.
+        val heights = js("""[...document.querySelectorAll('#reading-rows td[data-label="When"]')]
+            .map(td => td.getBoundingClientRect().height / parseFloat(getComputedStyle(td).lineHeight)).join(',')""")
+            .trim('"').split(',').map { it.toDouble() }
+        assertEquals(2, heights.size)
+        assertTrue("timestamps wrapped: $heights", heights.all { it < 1.5 })
+        assertEquals("nowrap", js("getComputedStyle(document.querySelector('#reading-rows td[data-label=\"When\"]')).whiteSpace").trim('"'))
+        assertEquals("true", js("""(function(){ var r = document.querySelector('#reading-rows tr').getBoundingClientRect();
+            var w = document.querySelector('#reading-rows td[data-label="When"]').getBoundingClientRect();
+            return Math.abs(w.left - r.left) < 8 && w.width > r.width * 0.9; })()""").trim('"'))
+    }
+
+    @Test
+    fun analyticsSummaryColumnsLineUp() {
+        seedAnalytics()  // three series: Jo BSL, Steve BSL, Steve HBA1C
+        val positions = js("""[...document.querySelectorAll('#an-stat-rows tr')].map(tr =>
+            [...tr.querySelectorAll('td.num')].map(td => { var b = td.getBoundingClientRect();
+              return Math.round(b.left) + ':' + Math.round(b.top - tr.getBoundingClientRect().top); }).join(',')).join('|')""")
+            .trim('"').split("|").map { it.split(",") }
+        assertEquals(3, positions.size)
+        for (row in positions) {
+            assertEquals("Count, Min, Avg, Max, Latest", 5, row.size)
+            // Within a row every statistic sits on the same line...
+            assertEquals("tops differ in $row", 1, row.map { it.substringAfter(':') }.toSet().size)
+            // ...and in five distinct, increasing columns.
+            val lefts = row.map { it.substringBefore(':').toInt() }
+            assertEquals(lefts.sorted(), lefts)
+            assertEquals(5, lefts.toSet().size)
+        }
+        // The same statistic is in the same column for every series.
+        for (col in 0 until 5) {
+            assertEquals("column $col drifts between rows", 1, positions.map { it[col].substringBefore(':') }.toSet().size)
+        }
+    }
 }

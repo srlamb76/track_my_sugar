@@ -202,6 +202,8 @@ th, td { text-align: left; padding: .6rem .55rem; border-bottom: 1px solid var(-
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: var(--surface-2); }
 th { color: var(--muted); font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; }
+/* A timestamp is one unit: never wrap the date and the time onto two lines. */
+td[data-label="When"] { white-space: nowrap; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.num { font-weight: 650; color: var(--accent-strong); }
 td.row-actions { text-align: right; white-space: nowrap; }
@@ -322,8 +324,25 @@ button.subtab.active { background: var(--surface); color: var(--accent-strong); 
   .subpanel { grid-template-columns: 1fr; }
   .subnav { display: flex; }
   button.subtab { flex: 1; }
-  #an-stats td.num { display: inline-block; width: auto; margin-right: 1rem; }
-  #an-stats tbody tr { display: block; }
+
+  /* Reading rows: the date and time get a full-width line of their own. */
+  #reading-rows td[data-label="When"] { grid-column: 1 / -1; }
+
+  /* Analytics summary: the series name on top, then Count / Min / Avg / Max /
+     Latest as five equal columns with the label above each value, so the same
+     statistic lines up from one series to the next. */
+  #an-stats tbody tr {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: .3rem .5rem;
+  }
+  #an-stats td[data-label="Series"] { grid-column: 1 / -1; }
+  #an-stats td.num { text-align: left; }
+  #an-stats td.num::before {
+    display: block;
+    min-width: 0;
+    margin: 0 0 .1rem;
+    font-size: .65rem;
+  }
 }
 
 /* ---- Export ---------------------------------------------------------- */

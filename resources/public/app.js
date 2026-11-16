@@ -452,7 +452,7 @@ function renderLegendAndStats(series) {
         const avg = sum / vals.length;
         return `<tr>
           <td data-label="Series"><span class="swatch c${s.color}"></span>${escapeHtml(s.name)}</td>
-          <td class="num" data-label="Readings">${vals.length}</td>
+          <td class="num" data-label="Count">${vals.length}</td>
           <td class="num" data-label="Min">${fmt(min)}</td>
           <td class="num" data-label="Avg">${fmt(avg)}</td>
           <td class="num" data-label="Max">${fmt(max)}</td>
